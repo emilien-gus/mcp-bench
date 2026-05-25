@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"mcp-bench/internal/protocol"
 	"os/exec"
+	"sync"
 	"time"
 )
 
@@ -18,7 +19,6 @@ type StdioClient struct {
 
 func NewStdioClient(serverBin string) (*StdioClient, error) {
 	cmd := exec.Command(serverBin, "--transport", "stdio")
-
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -27,14 +27,11 @@ func NewStdioClient(serverBin string) (*StdioClient, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-
 	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
-
+	scanner.Buffer(make([]byte, 32*1024*1024), 32*1024*1024)
 	return &StdioClient{
 		cmd:     cmd,
 		encoder: json.NewEncoder(stdin),
@@ -60,7 +57,6 @@ func (c *StdioClient) Send(req protocol.Request) (*protocol.Response, error) {
 }
 
 func (c *StdioClient) Handshake() error {
-	// 1. initialize
 	params, _ := json.Marshal(protocol.InitializeParams{
 		ProtocolVersion: "2024-11-05",
 		ClientInfo:      protocol.ClientInfo{Name: "mcp-bench", Version: "1.0.0"},
@@ -71,19 +67,12 @@ func (c *StdioClient) Handshake() error {
 	}); err != nil {
 		return err
 	}
-
-	// 2. notifications/initialized
-	c.Send(protocol.Request{
-		JSONRPC: "2.0", Method: "notifications/initialized",
-	})
-
-	// 3. tools/list
+	c.Send(protocol.Request{JSONRPC: "2.0", Method: "notifications/initialized"})
 	if _, err := c.Send(protocol.Request{
 		JSONRPC: "2.0", ID: 1, Method: "tools/list",
 	}); err != nil {
 		return err
 	}
-
 	c.counter = 1
 	return nil
 }
@@ -111,53 +100,90 @@ func (c *StdioClient) Close() {
 	c.cmd.Wait()
 }
 
-func RunStdioBench(serverBin, tool string, n int, mode Mode) (*Result, error) {
-	if mode == ModeSession {
-		result := &Result{}
-		start := time.Now()
+func RunStdioBench(serverBin, tool string, n int, mode Mode, concurrency int) (*Result, error) {
+	if concurrency < 1 {
+		concurrency = 1
+	}
 
+	if mode == ModeSession {
 		client, err := NewStdioClient(serverBin)
 		if err != nil {
 			return nil, err
 		}
 		defer client.Close()
-
 		if err := client.Handshake(); err != nil {
 			return nil, err
 		}
+		result := &Result{}
+		start := time.Now()
 		for i := 0; i < n; i++ {
 			if err := client.CallTool(tool); err != nil {
-				result.Errors++
+				result.AddError()
 			}
 		}
-
 		result.Add(time.Since(start))
 		return result, nil
 	}
 
-	// режим call
-	client, err := NewStdioClient(serverBin)
-	if err != nil {
-		return nil, err
-	}
-	defer client.Close()
-
-	if err := client.Handshake(); err != nil {
-		return nil, err
-	}
-
-	result := &Result{}
-	for i := 0; i < n; i++ {
-		start := time.Now()
-		err := client.CallTool(tool)
-		elapsed := time.Since(start)
-
+	if concurrency == 1 {
+		client, err := NewStdioClient(serverBin)
 		if err != nil {
-			result.Errors++
-			continue
+			return nil, err
 		}
-		result.Add(elapsed)
+		defer client.Close()
+		if err := client.Handshake(); err != nil {
+			return nil, err
+		}
+		for i := 0; i < warmupN; i++ {
+			client.CallTool(tool)
+		}
+		result := &Result{}
+		for i := 0; i < n; i++ {
+			start := time.Now()
+			err := client.CallTool(tool)
+			elapsed := time.Since(start)
+			if err != nil {
+				result.AddError()
+				continue
+			}
+			result.Add(elapsed)
+		}
+		return result, nil
 	}
 
+	// concurrent — каждая горутина запускает свой процесс сервера
+	perGoroutine := n / concurrency
+	result := &Result{}
+	var wg sync.WaitGroup
+
+	for g := 0; g < concurrency; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			client, err := NewStdioClient(serverBin)
+			if err != nil {
+				return
+			}
+			defer client.Close()
+			if err := client.Handshake(); err != nil {
+				return
+			}
+			for i := 0; i < warmupN; i++ {
+				client.CallTool(tool)
+			}
+			for i := 0; i < perGoroutine; i++ {
+				start := time.Now()
+				err := client.CallTool(tool)
+				elapsed := time.Since(start)
+				if err != nil {
+					result.AddError()
+					continue
+				}
+				result.Add(elapsed)
+			}
+		}()
+	}
+
+	wg.Wait()
 	return result, nil
 }

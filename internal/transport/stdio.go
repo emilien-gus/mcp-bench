@@ -10,7 +10,7 @@ import (
 
 func RunStdio() error {
 	scanner := bufio.NewScanner(os.Stdin)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // буфер 1МБ для heavy
+	scanner.Buffer(make([]byte, 32*1024*1024), 32*1024*1024)
 	encoder := json.NewEncoder(os.Stdout)
 
 	for scanner.Scan() {
