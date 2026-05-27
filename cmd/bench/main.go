@@ -55,6 +55,25 @@ func main() {
 		{"http", "heavy", 10000, bench.ModeSession, 1},
 		{"stdio", "echo", 10000, bench.ModeSession, 1},
 		{"stdio", "heavy", 10000, bench.ModeSession, 1},
+
+		// WebSocket sequential
+		{"ws", "echo", 10000, bench.ModeCall, 1},
+		{"ws", "heavy", 10000, bench.ModeCall, 1},
+		{"ws", "ultra", 500, bench.ModeCall, 1},
+		{"ws", "superheavy", 50, bench.ModeCall, 1},
+
+		// WebSocket concurrent
+		{"ws", "echo", 10000, bench.ModeCall, 2},
+		{"ws", "echo", 10000, bench.ModeCall, 4},
+		{"ws", "echo", 10000, bench.ModeCall, 8},
+		{"ws", "echo", 10000, bench.ModeCall, 16},
+		{"ws", "heavy", 10000, bench.ModeCall, 4},
+		{"ws", "heavy", 10000, bench.ModeCall, 8},
+		{"ws", "heavy", 10000, bench.ModeCall, 16},
+
+		// WebSocket session
+		{"ws", "echo", 10000, bench.ModeSession, 1},
+		{"ws", "heavy", 10000, bench.ModeSession, 1},
 	}
 
 	os.MkdirAll("results", 0755)
@@ -84,6 +103,11 @@ func main() {
 				Mode:        exp.mode,
 				Concurrency: exp.concurrency,
 			})
+		} else if exp.transport == "ws" {
+			result, err = bench.RunWSBench(
+				"ws://localhost:8081/ws",
+				exp.tool, exp.n, exp.mode, exp.concurrency,
+			)
 		} else {
 			result, err = bench.RunStdioBench(serverBin, exp.tool, exp.n, exp.mode, exp.concurrency)
 		}

@@ -8,8 +8,8 @@ import (
 )
 
 func main() {
-	tr := flag.String("transport", "stdio", "Transport: stdio or http")
-	port := flag.Int("port", 8080, "Port for HTTP transport")
+	tr := flag.String("transport", "stdio", "Transport: stdio, http, ws")
+	port := flag.Int("port", 8080, "Port for HTTP/WS transport")
 	flag.Parse()
 
 	switch *tr {
@@ -21,6 +21,12 @@ func main() {
 		addr := fmt.Sprintf(":%d", *port)
 		log.Printf("Starting HTTP server on %s", addr)
 		if err := transport.RunHTTP(addr); err != nil {
+			log.Fatal(err)
+		}
+	case "ws":
+		addr := fmt.Sprintf(":%d", *port)
+		log.Printf("Starting WebSocket server on %s", addr)
+		if err := transport.RunWebSocket(addr); err != nil {
 			log.Fatal(err)
 		}
 	default:
